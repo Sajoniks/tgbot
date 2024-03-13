@@ -1,0 +1,12 @@
+{
+  "dependencies": [
+    "boost-asio",
+    "boost-beast",
+    "boost-system",
+    "boost-url",
+    "fmt",
+    "openssl",
+    "rapidjson",
+    "sqlite3"
+  ]
+}

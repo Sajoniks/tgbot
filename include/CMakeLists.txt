@@ -1,0 +1,22 @@
+target_sources(${PROJECT_NAME}
+    PUBLIC
+        configuration/configuration.h
+        tgapi/bot/bot.h
+        tgapi/command/function.h
+        tgapi/command/command_module.h
+        tgapi/types/api_types.h
+        tgapi/types/api_types_parse.h
+        tgapi/rest_client.h
+        tgapi/tgapi.h
+        log/logmanager.h
+        log/types.h
+        log/logger.h
+        log/logging.h
+        sqlite/sqlite.h
+        util.h
+
+)
+target_include_directories(${PROJECT_NAME}
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
