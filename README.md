@@ -13,7 +13,7 @@ may be implemented in the future.
 ## CMake
 
 This library provides `CMakeLists` file. To generate project files, run the following in your terminal:
-```commandline
+```sh
 > cmake -B [build directory] -S . "-DCMAKE_TOOLCHAIN_FILE=[path to vcpkg]/scripts/buildsystems/vcpkg.cmake"
 ```
 
@@ -29,13 +29,13 @@ Dockerfile is also provided for building and running your bot in the container.
 
 To build the container, run in the terminal:
 
-```commandline
+```sh
 > sudo docker build -t tgbot .
 ```
 
 To run your built image, use the following:
 
-```commandline
+```sh
 > sudo docker run --rm -n tgbot\run tgbot
 ```
 
@@ -50,10 +50,10 @@ Once you have obtained the token, provide a configuration file entry:
   "Telegram": {
     "Token": "your-token",
     "Gateway": "api.telegram.org",
-    // you can also set long polling interval
+    /* you can also set long polling interval */
     
     "LongPolling": {
-      "Interval": 4 // in seconds
+      "Interval": 4 /* in seconds */
     }
   }
 }
