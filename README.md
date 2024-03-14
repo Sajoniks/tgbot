@@ -39,7 +39,34 @@ To run your built image, use the following:
 > sudo docker run --rm -n tgbot\run tgbot
 ```
 
-## Running
+# Running
+
+## Create interaction module
+
+This library operates with "interaction module" abstraction. This object is responsible for responding to received slash commands.
+
+Example of the simple interaction module:
+
+```cpp
+#include "tgapi/bot/bot.h"
+
+class ExampleInteraction : public tg::BotInteractionModuleBase {
+public:
+    void example_command(int x, float y) { }
+    void example_command_2(const long* optional, const std::string& xy) { }
+
+    ExampleInteraction() {
+        add_command("example1", &ExampleInteraction::example_command);
+        add_command("example2", &ExampleInteraction::example_command_2);
+    }
+};
+```
+
+Here we create two handlers: `example1` and `example2`. The first handler accepts `int` and `float` parameters, and the second accepts optional `long` parameter and const `std::string` reference.
+
+> Note: arguments are immutable so must be passed as const 
+
+## Configuring
  
 To run this bot, you must provide `Token`. `Token` is obtained using Telegram's `BotFather`. 
 
@@ -61,15 +88,15 @@ Once you have obtained the token, provide a configuration file entry:
 
 You can learn about configuration in the [Configuration](#configuration) section.
 
-## Features
+# Features
 
 This library provides multiple modules for building your bots, but it is planned to split them into different libraries.
 
-### SQLite integration
+## SQLite integration
 
 There is support for querying `SQLite` databases in convenient way:
 
-#### Create and query database
+### Create and query database
 ```cpp
 #include <sqlite/sqlite.h>
 
@@ -92,7 +119,7 @@ catch (const sqlite::Error& e) {
 }
 ```
 
-#### Inserting values
+### Inserting values
 ```cpp
 #include <sqlite/sqlite.h>
 
@@ -110,7 +137,7 @@ catch (const sqlite::Error& e) {
 }
 ```
 
-#### Transactions
+### Transactions
 ```cpp
 #include <sqlite/sqlite.h>
 
@@ -131,7 +158,7 @@ catch (const sqlite::Error& e) {
 }
 ```
 
-### Configuration
+## Configuration
 
 Reading and accessing configuration is also possible. 
 
@@ -164,7 +191,7 @@ auto value2 = condif["Nested::Configuration::Possible"]; // returns "true"
 Note that configuration is immutable after created, and can be copied around safely: it is shared between objects 
 using shared pointers.
 
-### Logging
+## Logging
 
 Simple console logging is provided.
 
