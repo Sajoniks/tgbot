@@ -1,5 +1,7 @@
 /db
 /config
 /project
+/project-win
+vcpkg_installed
 /.idea
 /docker

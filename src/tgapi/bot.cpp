@@ -49,9 +49,9 @@ class TimerData {
 public:
 
     using HandleType    = long;
-    using IntervalType  = long;
-    using ClockType     = typename std::chrono::high_resolution_clock;
-    using TimePointType = typename ClockType::time_point;
+    using ClockType     = typename boost::posix_time::microsec_clock;
+    using TimePointType = typename boost::posix_time::ptime;
+    using IntervalType  = typename boost::posix_time::time_duration;
     using CallbackType  = typename std::function<void(TimerReply&)>;
 
     TimerData(HandleType handle, CallbackType cb, IntervalType interval, const TimePointType& tp, bool looping)
@@ -61,20 +61,35 @@ public:
         , _handle { handle }
         , _loop{ looping }
     {}
+    TimerData(HandleType handle, CallbackType cb, IntervalType interval, bool looping)
+        : _expiresAt{ ClockType::universal_time() + interval }
+        , _cb { std::move(cb) }
+        , _interval{ interval }
+        , _handle { handle }
+        , _loop{ looping }
+    {}
+    TimerData(HandleType handle, CallbackType cb, long intervalSeconds, bool looping)
+        : TimerData(handle, cb, boost::posix_time::seconds(intervalSeconds), looping)
+    {}
 
     TimerData(const TimerData&) = default;
     TimerData(TimerData&&) = default;
     TimerData& operator=(const TimerData&) = default;
     TimerData& operator=(TimerData&&) = default;
 
-    TimePointType expires_at() const { return _expiresAt; }
+    [[nodiscard]] TimePointType expires_at() const { return _expiresAt; }
 
     void refresh() {
-        _expiresAt = ClockType::now() + std::chrono::seconds(_interval);
+        _expiresAt = ClockType::universal_time() + _interval;
     }
 
-    void refresh(IntervalType interval) {
-        _interval = interval;
+    void refresh(IntervalType time) {
+        _interval = std::move(time);
+        refresh();
+    }
+
+    void refresh(long seconds) {
+        _interval = boost::posix_time::seconds(seconds);
         refresh();
     }
 
@@ -85,19 +100,18 @@ public:
         _cb(r);
     }
 
-    [[nodiscard]] long time_remaining() const {
-        using namespace std::chrono;
-        return duration_cast<seconds>(expires_at() - ClockType::now()).count();
+    [[nodiscard]] auto time_remaining() const {
+        return expires_at() - ClockType::universal_time();
     }
 
-    [[nodiscard]] IntervalType interval() const {
+    [[nodiscard]] auto interval() -> IntervalType const {
         return _interval;
     }
 
 private:
     TimePointType _expiresAt;
     HandleType _handle;
-    IntervalType _interval;
+    boost::posix_time::time_duration _interval;
     CallbackType _cb;
     bool _loop;
 };
@@ -140,14 +154,14 @@ class TimerServiceImpl {
             {
                 bool needSort = false;
 
-                const auto now = TimerData::ClockType::now();
+                const auto now = TimerData::ClockType::universal_time();
 
                 std::unique_lock<std::recursive_mutex> lock { _mutex };
                 for (auto it = _timers.begin(); it != _timers.cend();) {
                     auto& data = *it;
                     auto handle = data.handle();
-                    const auto diff = data.expires_at() - now;
-                    if (diff.count() < 0) {
+                    const auto diff = (data.expires_at() - now).total_milliseconds();
+                    if (diff < 0) {
 
                         TimerReply r{ handle };
                         // @todo Post on thread pool?
@@ -177,15 +191,17 @@ class TimerServiceImpl {
                     } else {
                         lock.unlock();
 
-                        const long sleepTime = std::max( data.time_remaining(), 1l );
+                        const long sleepTime = std::max(data.time_remaining().total_seconds(), 0l);
 
-                        _logger->info("All timers are in process. Went sleeping for {}s", sleepTime);
+                        if (sleepTime > 0) {
+                            _logger->info("All timers are in process. Went sleeping for {}s", sleepTime);
 
-                        std::unique_lock<std::mutex> workerLock{_workerMutex};
-                        _waiting = true;
-                        _cv.wait_for(workerLock, chrono::seconds(sleepTime), [this] {
-                            return !_waiting;
-                        });
+                            std::unique_lock<std::mutex> workerLock{_workerMutex};
+                            _waiting = true;
+                            _cv.wait_for(workerLock, chrono::seconds(sleepTime), [this] {
+                                return !_waiting;
+                            });
+                        }
 
                         break;
                     }
@@ -213,12 +229,8 @@ public:
 
     void add_timer(const std::function<void(TimerReply&)>& callback, long handle, long interval, bool looping) {
         std::unique_lock<std::recursive_mutex> lock{ _mutex };
-        namespace chrono = std::chrono;
 
-        const auto now = TimerData::ClockType::now();
-        const auto next = now + chrono::seconds(interval);
-
-        _timers.emplace_back(handle, callback, interval, next, looping);
+        _timers.emplace_back(handle, callback, interval, looping);
         _timers.sort();
 
         _logger->info("Added timer h = {} interval = {}s", handle, interval);

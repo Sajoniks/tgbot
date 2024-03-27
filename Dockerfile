@@ -2,21 +2,13 @@ FROM alpine:latest as build-env
 LABEL description="Build container - TgBot"
 
 ARG VCPKG_GIT_PATH=https://github.com/Microsoft/vcpkg.git
-#ARG CMAKE_BIN_PATH=https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.sh
 
 RUN apk update && \
     apk add --no-cache \
         wget ca-certificates git ninja build-base curl zip unzip tar cmake linux-headers pkgconfig perl bash
 
-
 ENV VCPKG_FEATURE_FLAGS=manifests
 ENV VCPKG_FORCE_SYSTEM_BINARIES=1
-
-#RUN cd /tmp && \
-#    wget -O install-cmake.sh ${CMAKE_BIN_PATH} && \
-#    chmod +x install-cmake.sh && \
-#    ./install-cmake.sh --prefix=/usr/local --skip-license && \
-#    rm install-cmake.sh
 
 RUN cd /tmp && \
     git config --global core.compression 0 && \

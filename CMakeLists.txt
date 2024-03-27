@@ -17,6 +17,9 @@ find_package(RapidJSON CONFIG REQUIRED)
 
 add_executable(${PROJECT_NAME})
 
+set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 17)
+
+
 if (UNIX AND NOT APPLE)
     set_property(GLOBAL PROPERTY OS "linux")
     target_compile_definitions(${PROJECT_NAME}
