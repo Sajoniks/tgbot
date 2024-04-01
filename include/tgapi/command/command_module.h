@@ -16,14 +16,20 @@ class BotInteraction {
 
 public:
 
-    BotInteraction(TelegramBot* bot, Message* message)
+    BotInteraction(TelegramBot& bot, Message& message)
         : _bot{ bot }
         , _m{ message }
     {}
 
-    [[nodiscard]] const Chat& get_chat() const { return _m->Chat; }
-    [[nodiscard]] const Message& get_message() const { return *_m; }
-    [[nodiscard]] TelegramBot& get_bot() const { return *_bot; }
+    BotInteraction() = delete;
+    BotInteraction(const BotInteraction&) = delete;
+    BotInteraction(BotInteraction&&) = delete;
+    BotInteraction& operator=(const BotInteraction&) = delete;
+    BotInteraction& operator=(BotInteraction&&) = delete;
+
+    [[nodiscard]] const Chat& get_chat() const { return _m.Chat; }
+    [[nodiscard]] const Message& get_message() const { return _m; }
+    [[nodiscard]] TelegramBot& get_bot() const { return _bot; }
 
     [[maybe_unused]] Future<Result<Message>> reply_async(
             std::string_view text = "",
@@ -31,8 +37,8 @@ public:
     ) const;
 
 private:
-    TelegramBot* _bot;
-    Message* _m;
+    TelegramBot& _bot;
+    Message& _m;
 };
 
 class BotInteractionModuleBase {
@@ -43,12 +49,15 @@ public:
     BotInteractionModuleBase& operator=(const BotInteractionModuleBase&) = delete;
     virtual ~BotInteractionModuleBase() = default;
 
-    virtual void execute_interaction(UniquePtr<BotInteraction> interaction);
-    virtual void post_login(TelegramBot& bot) { }
+    virtual void execute_interaction(tg::UniquePtr<BotInteraction> interaction);
+    virtual void post_login(tg::TelegramBot& bot) { }
+    void receive_message(tg::UniquePtr<BotInteraction> interaction);
 
 protected:
 
     mylog::Logger& get_logger() const;
+
+    virtual void on_receive_message() { }
 
     [[nodiscard]] const BotInteraction& get_current_interaction() {
         if (!_current) {
@@ -64,6 +73,7 @@ protected:
         auto ptr = make_unique<FuncType>((Class*)this, func);;
         _mapping[std::move(commandName)] = std::move(ptr);
     }
+
 
 private:
     UniquePtr<BotInteraction> _current;

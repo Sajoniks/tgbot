@@ -78,20 +78,26 @@ Future<Result<Message>> BotInteraction::reply_async(
     const MessageEntities* entities
 ) const {
     SendMessageParams parms;
-    parms.ChatId = _m->Chat.Id;
+    parms.ChatId = _m.Chat.Id;
     parms.Text = text;
     if (entities) {
         parms.Entities = *entities;
     }
     ReplyParameters reply;
-    reply.MessageId = _m->Id;
+    reply.MessageId = _m.Id;
     parms.Reply = reply;
 
-    return _bot->send_message_async(parms);
+    return _bot.send_message_async(parms);
 }
 
 mylog::Logger& BotInteractionModuleBase::get_logger() const {
     return *_logger;
+}
+
+void BotInteractionModuleBase::receive_message(tg::UniquePtr<BotInteraction> interaction) {
+    _current = std::move(interaction);
+    on_receive_message();
+    _current.reset();
 }
 
 void BotInteractionModuleBase::execute_interaction(UniquePtr<BotInteraction> interaction) {

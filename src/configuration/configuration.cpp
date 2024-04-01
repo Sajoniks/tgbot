@@ -1,10 +1,11 @@
+#include "configuration/configuration.h"
+
 #include <fstream>
-#include <fmt/core.h>
 #include <rapidjson/document.h>
 #include <rapidjson/reader.h>
 #include <rapidjson/istreamwrapper.h>
-#include "configuration/configuration.h"
 #include "util.h"
+#include "tgapi/fmt/tgbot_fmt.h"
 
 namespace config {
 
@@ -137,13 +138,13 @@ Store Store::from_json(const std::filesystem::path& jsonPath) {
 
     const auto path = util::get_executable_path() / jsonPath;
     if (!std::filesystem::exists(path)) {
-        throw std::runtime_error(fmt::format(R"("{}": no such file or directory)", jsonPath.c_str()));
+        throw std::runtime_error(fmt::format(R"("{}": no such file or directory)", jsonPath));
     }
 
     std::ifstream ifs;
     ifs.open(path);
     if (!ifs.is_open()) {
-        throw std::runtime_error(fmt::format(R"("{}": failed to open file)", jsonPath.c_str()));
+        throw std::runtime_error(fmt::format(R"("{}": failed to open file)", jsonPath));
     }
 
     json::Document d;

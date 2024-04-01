@@ -46,8 +46,13 @@ public:
     ~Result() = default;
 
     [[nodiscard]] bool is_ok() const { return _ok; }
-    [[nodiscard]] const T* content() const { return _ok ? (&*_content) : nullptr; };
+    [[nodiscard]] const T* content() const { return _ok ? (&*_content) : nullptr; }
+    [[nodiscard]] T* content() { return _ok ? (&*_content) : nullptr; }
     [[nodiscard]] const std::string* error() const { return _ok ? nullptr : (&*_error); }
+
+    [[nodiscard]] operator bool() const {
+        return _ok;
+    }
 
 private:
     std::optional<std::string> _error;
@@ -61,13 +66,27 @@ struct ReplyParameters {
 
 struct MessageEntity {
     enum Type {
+        UNRESOLVED,
+
         MENTION,
         HASHTAG,
         CASHTAG,
         BOT_COMMAND,
         URL,
         EMAIL,
-        PHONE_NUMBER
+        PHONE_NUMBER,
+
+        BOLD,
+        ITALIC,
+        UNDERLINE,
+        STRIKETHROUGH,
+        SPOILER,
+        BLOCK_QUOTE,
+        CODE,
+        MONOWIDTH,
+        TEXT_LINK,
+        TEXT_MENTION,
+        CUSTOM_EMOJI
     };
     int Type { 0 };
     long Offset { 0 };

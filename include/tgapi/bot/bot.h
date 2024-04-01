@@ -26,7 +26,7 @@ class TimerReply final {
     void consume_reply();
 public:
 
-    TimerReply(long handle);
+    explicit TimerReply(long handle);
 
     TimerReply(const TimerReply&) = delete;
     TimerReply(TimerReply&&) = delete;
@@ -37,16 +37,16 @@ public:
     void set_delete();
     void update_interval(long time);
 
-    bool is_delete() const;
-    bool is_interval() const;
+    [[nodiscard]] bool is_delete() const;
+    [[nodiscard]] bool is_interval() const;
 
-    long interval() const;
-    long handle() const;
+    [[nodiscard]] long interval() const;
+    [[nodiscard]] long handle() const;
 
 private:
     bool _consumed { false };
     bool _delete { false };
-    long _newInterval { -1 };
+    long _newIntervalMs { -1 };
     long _handle { 0 };
 };
 

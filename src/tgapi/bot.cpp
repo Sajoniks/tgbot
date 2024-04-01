@@ -1,5 +1,6 @@
 #include "tgapi/bot/bot.h"
 #include "tgapi/rest_client.h"
+#include "tgapi/fmt/tgbot_fmt.h"
 #include "tgapi/types/api_types_parse.h"
 
 #include "log/logging.h"
@@ -8,11 +9,9 @@
 
 #include <list>
 #include <thread>
-#include <fmt/core.h>
 #include <boost/asio/thread_pool.hpp>
 #include <filesystem>
 #include <utility>
-
 
 namespace tg
 {
@@ -69,7 +68,7 @@ public:
         , _loop{ looping }
     {}
     TimerData(HandleType handle, CallbackType cb, long intervalSeconds, bool looping)
-        : TimerData(handle, cb, boost::posix_time::seconds(intervalSeconds), looping)
+        : TimerData(handle, std::move(cb), boost::posix_time::seconds(intervalSeconds), looping)
     {}
 
     TimerData(const TimerData&) = default;
@@ -84,7 +83,7 @@ public:
     }
 
     void refresh(IntervalType time) {
-        _interval = std::move(time);
+        _interval = time;
         refresh();
     }
 
@@ -104,7 +103,7 @@ public:
         return expires_at() - ClockType::universal_time();
     }
 
-    [[nodiscard]] auto interval() -> IntervalType const {
+    [[nodiscard]] IntervalType interval() const {
         return _interval;
     }
 
@@ -131,9 +130,6 @@ bool operator==(const TimerData& a, const long h) {
 class TimerServiceImpl {
 
     void worker_thread() {
-
-        namespace chrono = std::chrono;
-
         while(true) {
 
             {
@@ -173,8 +169,10 @@ class TimerServiceImpl {
                             continue;
                         }
                         else if (r.is_interval()) {
-                            data.refresh(r.interval());
-                            _logger->info("Updated timer h = {} new = {}s", data.handle(), r.interval());
+                            const auto newInterval = boost::posix_time::milliseconds(r.interval());
+                            data.refresh(newInterval);
+
+                            _logger->info("Updated timer h = {} new = {}s", data.handle(), newInterval.total_seconds());
                         }
 
                         if (data.looping()) {
@@ -191,14 +189,14 @@ class TimerServiceImpl {
                     } else {
                         lock.unlock();
 
-                        const long sleepTime = std::max(data.time_remaining().total_seconds(), 0l);
+                        const long sleepTime = std::max<long>(data.time_remaining().total_seconds(), 0l);
 
                         if (sleepTime > 0) {
                             _logger->info("All timers are in process. Went sleeping for {}s", sleepTime);
 
                             std::unique_lock<std::mutex> workerLock{_workerMutex};
                             _waiting = true;
-                            _cv.wait_for(workerLock, chrono::seconds(sleepTime), [this] {
+                            _cv.wait_for(workerLock, std::chrono::seconds(sleepTime), [this] {
                                 return !_waiting;
                             });
                         }
@@ -425,20 +423,33 @@ void TelegramBot::get_updates_async() {
         request.params().set("offset", std::to_string(_lastReceivedUpdate + 1));
 
         try {
-            const auto& response = _restClient->get(request);
 
-            auto pollUpdates = parse::do_parse<BotGetUpdates>(response.get_json()->GetObj());
-            if (pollUpdates.OK) {
+            using Updates = Result<std::vector<BotUpdate>>;
+
+            const rest::Response call = _restClient->get(request);
+            auto callContent = parse::do_parse<Updates>(call.get_json()->GetObj());
+
+            if (callContent) {
+                std::vector<BotUpdate>& pollUpdates = *callContent.content();
                 auto prevReceivedUpdate = _lastReceivedUpdate;
 
-                for (auto& upd: pollUpdates.Updates) {
+                for (auto& upd: pollUpdates) {
                     if (upd.UpdateType == BotUpdate::MESSAGE) {
-                        auto& messageData = upd.UpdateData.Message;
+                        bool commandHandled = false;
+
+                        Message& messageData = upd.UpdateData.Message;
+                        auto interaction = make_unique<BotInteraction>(*this, messageData);
+
                         for (auto& messageEntity: messageData.Entites) {
                             if (messageEntity.Type == MessageEntity::BOT_COMMAND) {
-                                auto interaction = make_unique<BotInteraction>(this, &messageData);
                                 _botInteraction->execute_interaction(std::move(interaction));
+                                commandHandled = true;
+                                break;
                             }
+                        }
+
+                        if (!commandHandled) {
+                            _botInteraction->receive_message(std::move(interaction));
                         }
                     }
 
@@ -452,6 +463,8 @@ void TelegramBot::get_updates_async() {
 
                     _logger->info("Last received update = {}", _lastReceivedUpdate);
                 }
+            } else {
+                _logger->error("getUpdates error: {}", *callContent.error());
             }
         }
         catch (const std::exception& e) {
@@ -490,7 +503,7 @@ void TelegramBot::begin_long_polling() {
         ofs.open(tgFile);
         ofs << 0;
         std::flush(ofs);
-        _logger->info(R"(Created long polling cache file at "{}")", tgFile.c_str());
+        _logger->info(R"(Created long polling cache file at "{}")", tgFile);
     } else {
         std::ifstream  ifs;
         ifs.open(tgFile);
@@ -557,6 +570,9 @@ std::future<Result<Message>> TelegramBot::send_message_async(const SendMessagePa
         auto r = _restClient->post(req);
 
         auto result = parse::do_parse<Result<Message>>(r.get_json()->GetObj());
+        if (!result) {
+            _logger->error("sendMessage error: {}", *result.error());
+        }
         promise->set_value(std::move(result));
     });
 
@@ -583,7 +599,7 @@ void TimerReply::set_delete() {
 
 void TimerReply::update_interval(long time) {
     consume_reply();
-    _newInterval = std::max(time, 1l);
+    _newIntervalMs = std::max(time, 1l);
 }
 
 void TimerReply::consume_reply() {
@@ -591,9 +607,9 @@ void TimerReply::consume_reply() {
     _consumed = true;
 }
 
-bool TimerReply::is_interval() const { return _newInterval > 0; }
+bool TimerReply::is_interval() const { return _newIntervalMs > 0; }
 bool TimerReply::is_delete() const { return _delete; }
-long TimerReply::interval() const { return _newInterval; }
+long TimerReply::interval() const { return _newIntervalMs; }
 long TimerReply::handle() const { return _handle; }
 
 }

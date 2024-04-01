@@ -34,26 +34,34 @@ namespace detail {
             std::invoke(p, it->value);
         }
     }
+
+    template<typename, typename = void>
+    struct IsIndexedAccess : std::false_type {};
+
+    template<typename T>
+    struct IsIndexedAccess<T, std::void_t<decltype(std::declval<T>()[0])>> : std::true_type{};
 }
 
 #pragma endregion // Details
 
-
 template<typename To>
 auto do_parse(const JArray& arr, ParseTag<std::vector<To>>) {
     std::vector<To> result;
-    for (const auto& e : arr) {
+    for (const auto& e: arr) {
         auto value = tg::parse::do_parse<To>(e.GetObj());
         result.push_back(std::move(value));
     }
     return result;
 }
 
-
 template<typename To>
 auto do_parse(const JObj& d, ParseTag<Result<To>>) {
     if (d["ok"].GetBool()) {
-        return Result<To>::from_content( do_parse<To>(d["result"].GetObj()) );
+        if constexpr (detail::IsIndexedAccess<To>::value) {
+            return Result<To>::from_content( do_parse<To>(d["result"].GetArray()) );
+        } else {
+            return Result<To>::from_content( do_parse<To>(d["result"].GetObj()) );
+        }
     } else {
         return Result<To>::from_error( d["description"].GetString() );
     }
@@ -161,12 +169,33 @@ inline auto do_parse(const JObj& d, ParseTag<tg::MessageEntity>) {
     tg::MessageEntity e;
 
     static const std::unordered_map<std::string, std::uint32_t> TYPE_STR_TO_ENUM {
-            { "bot_command", MessageEntity::BOT_COMMAND}
+            { "bot_command", MessageEntity::BOT_COMMAND },
+            { "phone_number", MessageEntity::PHONE_NUMBER },
+            { "mention", MessageEntity::MENTION },
+            { "hashtag", MessageEntity::HASHTAG },
+            { "cashtag", MessageEntity::CASHTAG },
+            { "url", MessageEntity::URL },
+            { "email", MessageEntity::EMAIL },
+            { "bold", MessageEntity::BOLD },
+            { "italic", MessageEntity::ITALIC },
+            { "underline", MessageEntity::UNDERLINE },
+            { "strikethrough", MessageEntity::STRIKETHROUGH },
+            { "spoiler", MessageEntity::SPOILER },
+            { "blockquote", MessageEntity::BLOCK_QUOTE },
+            { "code", MessageEntity::CODE },
+            { "pre", MessageEntity::MONOWIDTH },
+            { "text_link", MessageEntity::TEXT_LINK },
+            { "text_mention", MessageEntity::TEXT_MENTION },
+            { "custom_emoji", MessageEntity::CUSTOM_EMOJI }
     };
 
     detail::map_json_value(d, "type", [&e](const JValue& v) {
         const std::string type = v.GetString();
-        e.Type = TYPE_STR_TO_ENUM.at(type);
+        if (TYPE_STR_TO_ENUM.count(type)) {
+            e.Type = TYPE_STR_TO_ENUM.at(type);
+        } else {
+            e.Type = MessageEntity::UNRESOLVED;
+        }
     });
 
     detail::map_json_value(d, "offset", [&e](const JValue& v) { e.Offset = v.GetUint(); });
