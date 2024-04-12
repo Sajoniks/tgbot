@@ -18,10 +18,6 @@ struct SendMessageParams {
     std::optional<ReplyParameters> Reply;
 };
 
-namespace detail {
-    class TimerServiceImpl;
-}
-
 class TimerReply final {
     void consume_reply();
 public:
@@ -52,34 +48,29 @@ private:
 
 class TimerService final {
 
+    class Impl;
+
 public:
 
     TimerService();
 
     TimerService(const TimerService&) = delete;
     TimerService(TimerService&&) = delete;
-
     TimerService& operator=(const TimerService&) = delete;
     TimerService& operator=(TimerService&&) = delete;
+    ~TimerService();
 
     void add_timer(const std::function<void(TimerReply&)>& callback, long handle, long interval, bool looping);
     void update_timer(long handle, long interval);
     bool delete_timer(long handle);
 
-    ~TimerService();
-
 private:
-    std::unique_ptr<detail::TimerServiceImpl> _service;
+    UniquePtr<Impl> _impl;
 };
 
 class TelegramBot final
 {
-    void on_poll_update_timer(const system::error_code&);
-    void schedule_next_poll();
-    void get_updates_async();
-    void assert_if_not_logged() const;
-
-    rest::Request createBotRestRequest();
+    class Impl;
 
 public:
 
@@ -89,6 +80,7 @@ public:
     TelegramBot(TelegramBot&&) = delete;
     TelegramBot& operator=(const TelegramBot&) = delete;
     TelegramBot& operator=(TelegramBot&&) = delete;
+    ~TelegramBot();
 
     [[maybe_unused]] Future<Result<User>>      login_async();
     [[maybe_unused]] Future<Result<Message>>   send_message_async(const SendMessageParams& parms);
@@ -102,27 +94,7 @@ public:
     [[nodiscard]] TimerService& get_timer_service() const;
 
 private:
-
-    std::unique_ptr<asio::steady_timer> _getUpdatesTimer;
-    std::unique_ptr<rest::Client> _restClient;
-    std::unique_ptr<asio::execution_context> _ctx;
-    std::unique_ptr<asio::any_io_executor> _executor;
-    std::unique_ptr<BotInteractionModuleBase> _botInteraction;
-    std::unique_ptr<TimerService> _timerService;
-
-    mylog::LoggerPtr _logger;
-    config::Store _config;
-
-    std::fstream _tmpFile;
-    User _profile;
-
-    long _lastReceivedUpdate { 0 };
-    int _longPollInterval { 5 };
-    std::string _token;
-    std::string _gateway;
-
-    bool _isLongPolling { false };
-    bool _isLogged { false };
+    UniquePtr<Impl> _impl;
 };
 
 }

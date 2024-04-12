@@ -45,7 +45,7 @@ namespace detail {
 #pragma endregion // Details
 
 template<typename To>
-auto do_parse(const JArray& arr, ParseTag<std::vector<To>>) {
+auto do_parse(const JConstArray& arr, ParseTag<std::vector<To>>) -> std::vector<To> {
     std::vector<To> result;
     for (const auto& e: arr) {
         auto value = tg::parse::do_parse<To>(e.GetObj());
@@ -55,7 +55,16 @@ auto do_parse(const JArray& arr, ParseTag<std::vector<To>>) {
 }
 
 template<typename To>
-auto do_parse(const JObj& d, ParseTag<Result<To>>) {
+auto do_parse(const std::vector<To>& arr, ParseTag<JValue>, JAlloc& a) -> JValue {
+    JValue value { rapidjson::kArrayType };
+    for (const auto& e : arr) {
+        value.PushBack( do_parse<JValue>(e, a), a );
+    }
+    return value;
+}
+
+template<typename To>
+auto do_parse(const JConstObj& d, ParseTag<Result<To>>) {
     if (d["ok"].GetBool()) {
         if constexpr (detail::IsIndexedAccess<To>::value) {
             return Result<To>::from_content( do_parse<To>(d["result"].GetArray()) );
@@ -80,7 +89,7 @@ inline auto do_parse(const ChatId& id, ParseTag<JValue>, JAlloc& a) {
 }
 
 
-inline auto do_parse(const JObj& d, ParseTag<ReplyParameters>) {
+inline auto do_parse(const JConstObj& d, ParseTag<ReplyParameters>) {
     tg::ReplyParameters p;
 
     detail::map_json_value(d, "message_id", [&p](const JValue& v) { p.MessageId = v.GetInt64(); });
@@ -96,7 +105,7 @@ inline auto do_parse(const ReplyParameters& p, ParseTag<JValue>, JAlloc& a) {
 }
 
 
-inline auto do_parse(const JObj& d, ParseTag<tg::Chat>) {
+inline auto do_parse(const JConstObj& d, ParseTag<tg::Chat>) {
     tg::Chat c;
 
     detail::map_json_value(d, "id", [&c](const JValue& v) {
@@ -111,7 +120,7 @@ inline auto do_parse(const JObj& d, ParseTag<tg::Chat>) {
 }
 
 
-inline auto do_parse(const JObj& d, ParseTag<tg::User>) {
+inline auto do_parse(const JConstObj& d, ParseTag<tg::User>) {
     tg::User pf;
 
     detail::map_json_value(d, "id", [&pf](const JValue& v) { pf.Id = v.GetInt64(); });
@@ -155,7 +164,7 @@ inline auto do_parse(const JObj& d, ParseTag<tg::User>) {
 }
 
 
-inline auto do_parse(const JObj& d, ParseTag<tg::BotLogin>) {
+inline auto do_parse(const JConstObj& d, ParseTag<tg::BotLogin>) {
     tg::BotLogin l;
 
     detail::map_json_value(d, "ok",[&l](const JValue& v) { l.OK = v.GetBool(); });
@@ -164,11 +173,26 @@ inline auto do_parse(const JObj& d, ParseTag<tg::BotLogin>) {
     return l;
 }
 
+inline auto do_parse(const tg::MessageEntity& e, ParseTag<JValue>, JAlloc a) -> JValue {
+    JValue r{ rapidjson::kObjectType };
 
-inline auto do_parse(const JObj& d, ParseTag<tg::MessageEntity>) {
+    static const std::unordered_map<int, std::string> TYPE_STR_TO_ENUM {
+            {  MessageEntity::MONOWIDTH, "pre" },
+    };
+
+    auto it = TYPE_STR_TO_ENUM.find(e.Type);
+    if (it != TYPE_STR_TO_ENUM.end()) {
+        r.AddMember("type", JValue{ it->second.c_str(), a }, a);
+        r.AddMember("offset", JValue{ e.Offset }, a);
+        r.AddMember("length", JValue{ e.Length}, a);
+    }
+    return r;
+}
+
+inline auto do_parse(const JConstObj& d, ParseTag<tg::MessageEntity>) {
     tg::MessageEntity e;
 
-    static const std::unordered_map<std::string, std::uint32_t> TYPE_STR_TO_ENUM {
+    static const std::unordered_map<std::string, int> TYPE_STR_TO_ENUM {
             { "bot_command", MessageEntity::BOT_COMMAND },
             { "phone_number", MessageEntity::PHONE_NUMBER },
             { "mention", MessageEntity::MENTION },
@@ -205,7 +229,7 @@ inline auto do_parse(const JObj& d, ParseTag<tg::MessageEntity>) {
 }
 
 
-inline auto do_parse(const JObj& d, ParseTag<tg::Message>) {
+inline auto do_parse(const JConstObj& d, ParseTag<tg::Message>) {
     tg::Message m;
 
     detail::map_json_value(d, "message_id", [&m](const JValue& v) { m.Id = v.GetInt64(); });
@@ -219,7 +243,7 @@ inline auto do_parse(const JObj& d, ParseTag<tg::Message>) {
 }
 
 
-inline auto do_parse(const JObj& d, ParseTag<tg::BotUpdate>) {
+inline auto do_parse(const JConstObj& d, ParseTag<tg::BotUpdate>) {
     BotUpdate u;
 
     detail::map_json_value(d, "update_id", [&u](const JValue& v) { u.Id = v.GetInt64(); });
@@ -233,7 +257,7 @@ inline auto do_parse(const JObj& d, ParseTag<tg::BotUpdate>) {
 }
 
 
-inline auto do_parse(const JObj& d, ParseTag<tg::BotGetUpdates>) {
+inline auto do_parse(const JConstObj& d, ParseTag<tg::BotGetUpdates>) {
     tg::BotGetUpdates g;
     detail::map_json_value(d, "ok", [&g](const JValue& v) { g.OK = v.GetBool(); });
     detail::map_json_value(d, "result", [&g](const JValue& v) { g.Updates = parse::do_parse<std::vector<BotUpdate>>(v.GetArray()); });

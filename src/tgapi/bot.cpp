@@ -12,6 +12,7 @@
 #include <boost/asio/thread_pool.hpp>
 #include <filesystem>
 #include <utility>
+#include <iostream>
 
 namespace tg
 {
@@ -26,7 +27,7 @@ auto do_parse(const SendMessageParams& p, ParseTag<JValue>, JAlloc& a) {
         o.AddMember("chat_id", do_parse<JValue>(p.ChatId, a), a);
         o.AddMember("text", JValue{ p.Text.c_str(), a }, a);
         if (p.Entities) {
-
+            o.AddMember("entities", do_parse<JValue>(*p.Entities, a), a);
         }
         if (p.Reply) {
             o.AddMember("reply_parameters", do_parse<JValue>(*p.Reply, a), a);
@@ -127,7 +128,9 @@ bool operator==(const TimerData& a, const long h) {
     return a.handle() == h;
 }
 
-class TimerServiceImpl {
+}
+
+class TimerService::Impl {
 
     void worker_thread() {
         while(true) {
@@ -150,7 +153,7 @@ class TimerServiceImpl {
             {
                 bool needSort = false;
 
-                const auto now = TimerData::ClockType::universal_time();
+                const auto now = detail::TimerData::ClockType::universal_time();
 
                 std::unique_lock<std::recursive_mutex> lock { _mutex };
                 for (auto it = _timers.begin(); it != _timers.cend();) {
@@ -214,16 +217,16 @@ class TimerServiceImpl {
 
 public:
 
-    TimerServiceImpl() {
+    Impl() {
         _logger = mylog::LogManager::get().create_logger("Timers");
-        _thread = std::thread{ &TimerServiceImpl::worker_thread, this };
+        _thread = std::thread{ &Impl::worker_thread, this };
         _thread.detach();
     }
 
-    TimerServiceImpl(const TimerServiceImpl&) = delete;
-    TimerServiceImpl(TimerServiceImpl&&) = delete;
-    const TimerServiceImpl& operator=(const TimerServiceImpl&) = delete;
-    const TimerServiceImpl& operator=(TimerServiceImpl&&) = delete;
+    Impl(const Impl&) = delete;
+    Impl(Impl&&) = delete;
+    const Impl& operator=(const Impl&) = delete;
+    const Impl& operator=(Impl&&) = delete;
 
     void add_timer(const std::function<void(TimerReply&)>& callback, long handle, long interval, bool looping) {
         std::unique_lock<std::recursive_mutex> lock{ _mutex };
@@ -277,7 +280,7 @@ public:
         return false;
     }
 
-    ~TimerServiceImpl() = default;
+    ~Impl() = default;
 
 private:
     std::thread _thread;
@@ -289,41 +292,144 @@ private:
 
     mylog::LoggerPtr _logger;
 
-    std::list<TimerData> _timers; // we could use priority_queue, but we need iterators
+    std::list<detail::TimerData> _timers; // we could use priority_queue, but we need iterators
 };
 
-}
-
 void TimerService::add_timer(const std::function<void(TimerReply&)>& callback, long handle, long interval, bool looping) {
-    _service->add_timer(callback, handle, interval, looping);
+    _impl->add_timer(callback, handle, interval, looping);
 }
 
 bool TimerService::delete_timer(long handle) {
-    return _service->delete_timer(handle);
+    return _impl->delete_timer(handle);
 }
 
 void TimerService::update_timer(long handle, long interval) {
-    _service->update_timer(handle, interval);
+    _impl->update_timer(handle, interval);
 }
 
 TimerService::TimerService()
-    : _service { new detail::TimerServiceImpl() }
+    : _impl { new Impl() }
 {}
 
 TimerService::~TimerService() = default;
 
 #pragma endregion // Timer service
 
-TelegramBot::TelegramBot(config::Store  config, std::unique_ptr<BotInteractionModuleBase> interaction)
-    : _restClient{ nullptr }
-    , _config{ std::move( config ) }
-    , _timerService{ new TimerService() }
-    , _botInteraction{ std::move(interaction) }
-    , _isLogged{ false }
+class TelegramBot::Impl
 {
-    _logger = mylog::LogManager::get().create_logger("Bot");
+    void schedule_next_poll();
+    void get_updates_async();
+    void assert_if_not_logged() const;
 
-    const auto telegramToken = _config["Telegram::Token"];
+    rest::Request createBotRestRequest();
+
+public:
+
+    Impl(TelegramBot& owner, config::Store config, mylog::LoggerPtr logger, UniquePtr<BotInteractionModuleBase> interaction);
+
+    Impl(const Impl&) = delete;
+    Impl(Impl&&) = delete;
+    Impl& operator=(const Impl&) = delete;
+    Impl& operator=(Impl&&) = delete;
+    ~Impl() = default;
+
+    void begin_long_polling();
+
+    Future<Result<User>>      login_async();
+    Future<Result<Message>>   send_message_async(const SendMessageParams& parms);
+
+    [[nodiscard]] const User& get_profile() const;
+    [[nodiscard]] const config::Store& get_config() const;
+    [[nodiscard]] TimerService& get_timer_service() const;
+
+private:
+
+    std::condition_variable _isTerminating;
+
+    std::string _token;
+    std::string _gateway;
+
+    config::Store _config;
+
+    UniquePtr<boost::asio::steady_timer> _getUpdatesTimer { nullptr };
+    UniquePtr<rest::Client> _restClient { nullptr };
+    UniquePtr<BotInteractionModuleBase> _botInteraction { nullptr };
+    UniquePtr<TimerService> _timerService { nullptr };
+
+    std::thread _workerThread;
+    boost::asio::io_context _ioCtx;
+
+    mylog::LoggerPtr _logger { nullptr };
+    TelegramBot* _interface { nullptr };
+
+    std::fstream _tmpFile;
+    User _profile;
+
+    long _lastReceivedUpdate { 0 };
+    int _longPollInterval { 5 };
+
+    bool _isLongPolling { false };
+    bool _isLogged { false };
+};
+
+
+TelegramBot::TelegramBot(config::Store config, std::unique_ptr<BotInteractionModuleBase> interaction)
+    : _impl{ new Impl(*this, std::move(config), mylog::LogManager::get().create_logger("Bot"), std::move(interaction)) }
+{}
+
+Future<Result<User>> TelegramBot::login_async() {
+    return _impl->login_async();
+}
+
+Future<Result<Message>> TelegramBot::send_message_async(const tg::SendMessageParams& parms) {
+    return _impl->send_message_async(parms);
+}
+
+Future<Result<Message>> TelegramBot::send_message_async(const ChatId& chatId, std::string_view message) {
+    SendMessageParams p;
+    p.ChatId = chatId;
+    p.Text = message;
+    return send_message_async(p);
+}
+
+void TelegramBot::begin_long_polling() {
+    _impl->begin_long_polling();
+}
+
+const User& TelegramBot::get_profile() const {
+    return _impl->get_profile();
+}
+
+const config::Store& TelegramBot::get_config() const {
+    return _impl->get_config();
+}
+
+TimerService& TelegramBot::get_timer_service() const {
+    return _impl->get_timer_service();
+}
+
+TelegramBot::~TelegramBot() {
+
+}
+
+#pragma region TgBot Implementation
+
+TelegramBot::Impl::Impl(
+      TelegramBot& owner
+    , config::Store config
+    , mylog::LoggerPtr logger
+    , UniquePtr<BotInteractionModuleBase> interaction
+)
+    : _config{ std::move(config) }
+    , _botInteraction{ std::move(interaction) }
+    , _logger{ logger }
+    , _timerService{ make_unique<TimerService>() }
+    , _restClient{ make_unique<rest::Client>() }
+    , _interface{ &owner }
+{
+    namespace asio = boost::asio;
+
+    const std::string_view telegramToken = _config["Telegram::Token"];
     if (telegramToken.empty()) {
         throw std::runtime_error("Token was not found in configuration");
     }
@@ -360,87 +466,76 @@ TelegramBot::TelegramBot(config::Store  config, std::unique_ptr<BotInteractionMo
 
     _logger->info("Gateway: {}", _gateway);
     _logger->info("Long-Polling interval: {}s", _longPollInterval);
-
-    auto threadPool = std::make_unique<boost::asio::thread_pool>(numThreads);
-
-    _executor = std::make_unique<boost::asio::any_io_executor>(threadPool->get_executor());
-    _ctx = std::move(threadPool);
-    _restClient = std::make_unique<rest::Client>(*_executor);
 }
 
-rest::Request TelegramBot::createBotRestRequest() {
+rest::Request TelegramBot::Impl::createBotRestRequest() {
     rest::Request request{_gateway};
     request.segments().push_back(_token);
     return request;
 }
 
-std::future<Result<User>> TelegramBot::login_async()
+std::future<Result<User>> TelegramBot::Impl::login_async()
 {
+    namespace asio = boost::asio;
+
     if (_isLogged)
     {
         throw std::runtime_error("bot is already logged");
     }
-    _isLogged = true;
-
-    _botInteraction->post_login(*this);
 
     auto promise = std::make_shared<std::promise<Result<User>>>();
 
-    boost::asio::post(*_executor, [this, promise]{
-        auto request = createBotRestRequest();
-        request.segments().push_back("getMe");
-
+    auto loginComplete = [this, promise](const rest::Response& r) {
         try {
-            const auto& response = _restClient->get(request);
+            auto profile = tg::parse::do_parse<Result<User>>(r.get_json()->GetObj());
+            if (profile.is_ok()) {
 
-            auto profile = tg::parse::do_parse<Result<User>>(response.get_json()->GetObj());
-            if (!profile.is_ok())
-            {
+                _profile = *profile.content();
+                _botInteraction->post_login(*_interface);
+                _isLogged = true;
+
+                promise->set_value(profile);
+            } else {
                 _isLogged = false;
             }
-            else {
-                _profile = *profile.content();
-                _logger->info(R"(Logged as "{}")", _profile.UserName);
-            }
-
-            promise->set_value(std::move(profile));
-        }
-        catch (const std::exception& e) {
+        } catch (const std::exception& e) {
             _isLogged = false;
         }
-    });
+    };
+
+    rest::Request request = createBotRestRequest();
+    request.segments().push_back("getMe");
+
+    _restClient->get_async(request, loginComplete);
 
     return promise->get_future();
 }
 
-void TelegramBot::get_updates_async() {
+void TelegramBot::Impl::get_updates_async() {
     assert_if_not_logged();
 
-    boost::asio::post(*_executor, [this] {
+    using Updates = Result<std::vector<BotUpdate>>;
+    rest::Request request = createBotRestRequest();
+    request.segments().push_back("getUpdates");
+    request.params().set("offset", std::to_string(_lastReceivedUpdate + 1));
 
-        auto request = createBotRestRequest();
-        request.segments().push_back("getUpdates");
-        request.params().set("offset", std::to_string(_lastReceivedUpdate + 1));
-
+    _restClient->get_async(request, [this](const rest::Response& r) {
         try {
+            auto updatesResult = parse::do_parse<Updates>(r.get_json()->GetObj());
+            if (!updatesResult) {
+                _logger->error("getUpdates error: {}", *updatesResult.error());
+            } else {
+                std::vector<BotUpdate>& updates = *updatesResult.content();
+                const long prevUpdate = _lastReceivedUpdate;
 
-            using Updates = Result<std::vector<BotUpdate>>;
-
-            const rest::Response call = _restClient->get(request);
-            auto callContent = parse::do_parse<Updates>(call.get_json()->GetObj());
-
-            if (callContent) {
-                std::vector<BotUpdate>& pollUpdates = *callContent.content();
-                auto prevReceivedUpdate = _lastReceivedUpdate;
-
-                for (auto& upd: pollUpdates) {
+                for (auto&& upd: updates) {
                     if (upd.UpdateType == BotUpdate::MESSAGE) {
                         bool commandHandled = false;
 
                         Message& messageData = upd.UpdateData.Message;
-                        auto interaction = make_unique<BotInteraction>(*this, messageData);
+                        auto interaction = make_unique<BotInteraction>(*_interface, messageData);
 
-                        for (auto& messageEntity: messageData.Entites) {
+                        for (const MessageEntity& messageEntity: messageData.Entites) {
                             if (messageEntity.Type == MessageEntity::BOT_COMMAND) {
                                 _botInteraction->execute_interaction(std::move(interaction));
                                 commandHandled = true;
@@ -452,23 +547,17 @@ void TelegramBot::get_updates_async() {
                             _botInteraction->receive_message(std::move(interaction));
                         }
                     }
-
-                    _lastReceivedUpdate = upd.Id;
                 }
 
-                if (_lastReceivedUpdate != prevReceivedUpdate) {
+                if (_lastReceivedUpdate != prevUpdate) {
                     _tmpFile << _lastReceivedUpdate;
                     _tmpFile.seekp(0);
                     std::flush(_tmpFile);
 
                     _logger->info("Last received update = {}", _lastReceivedUpdate);
                 }
-            } else {
-                _logger->error("getUpdates error: {}", *callContent.error());
             }
-        }
-        catch (const std::exception& e) {
-            // ...
+        } catch(const std::exception& e) {
             _logger->error("Exception occurred while processing updates: {}", e.what());
         }
 
@@ -476,7 +565,7 @@ void TelegramBot::get_updates_async() {
     });
 }
 
-void TelegramBot::begin_long_polling() {
+void TelegramBot::Impl::begin_long_polling() {
     assert_if_not_logged();
 
     if (_isLongPolling) {
@@ -517,43 +606,42 @@ void TelegramBot::begin_long_polling() {
     _tmpFile.seekp(0);
     std::flush(_tmpFile);
 
-    _getUpdatesTimer = std::make_unique<boost::asio::steady_timer>( *_executor);
+    auto guard = boost::asio::make_work_guard(_ioCtx);
+    _getUpdatesTimer = std::make_unique<boost::asio::steady_timer>(_ioCtx.get_executor());
+
+    _workerThread = std::thread{ [this]{
+        _ioCtx.run();
+    } };
 
     get_updates_async();
 
-    std::mutex m;
-    std::unique_lock<std::mutex> lock{m };
-    std::condition_variable v;
-    v.wait(lock);
+    {
+        std::mutex blockingMutex;
+        std::unique_lock lock(blockingMutex);
+        _isTerminating.wait(lock);
+    }
 }
 
-const User& TelegramBot::get_profile() const {
+const User& TelegramBot::Impl::get_profile() const {
     return _profile;
 }
 
-void TelegramBot::schedule_next_poll() {
+void TelegramBot::Impl::schedule_next_poll() {
     if (_getUpdatesTimer->expires_from_now().count() <= 0) {
         _getUpdatesTimer->expires_from_now(std::chrono::seconds(_longPollInterval));
     }
-    _getUpdatesTimer->async_wait(std::bind(&TelegramBot::on_poll_update_timer, this, std::placeholders::_1));
+    _getUpdatesTimer->async_wait([this](const system::error_code& ec) {
+        if (!ec) {
+            get_updates_async();
+        }
+    });
 }
 
-void TelegramBot::on_poll_update_timer(const boost::system::error_code&) {
-    get_updates_async();
-}
-
-void TelegramBot::assert_if_not_logged() const {
+void TelegramBot::Impl::assert_if_not_logged() const {
     if (!_isLogged) throw std::runtime_error("login was not called");
 }
 
-Future<Result<Message>> TelegramBot::send_message_async(const ChatId& chatId, std::string_view message) {
-    SendMessageParams p;
-    p.ChatId = chatId;
-    p.Text = message;
-    return send_message_async(p);
-}
-
-std::future<Result<Message>> TelegramBot::send_message_async(const SendMessageParams& parms) {
+std::future<Result<Message>> TelegramBot::Impl::send_message_async(const SendMessageParams& parms) {
     auto promise = std::make_shared<std::promise<Result<Message>>>();
 
     if (parms.Text.empty()) {
@@ -561,31 +649,31 @@ std::future<Result<Message>> TelegramBot::send_message_async(const SendMessagePa
         return promise->get_future();
     }
 
-    boost::asio::post(*_executor, [this, parms, promise] {
-        auto req = createBotRestRequest();
-        req.segments().push_back("sendMessage");
-
-        req.set_json_content(parms);
-
-        auto r = _restClient->post(req);
-
+    rest::Request request = createBotRestRequest();
+    request.segments().push_back("sendMessage");
+    request.set_json_content(parms);
+    _restClient->post_async(request, [this, promise](const rest::Response& r) {
         auto result = parse::do_parse<Result<Message>>(r.get_json()->GetObj());
         if (!result) {
             _logger->error("sendMessage error: {}", *result.error());
+        } else {
+            promise->set_value(std::move(result));
         }
-        promise->set_value(std::move(result));
     });
 
     return promise->get_future();
 }
 
-const config::Store& TelegramBot::get_config() const {
+const config::Store& TelegramBot::Impl::get_config() const {
     return _config;
 }
 
-TimerService& TelegramBot::get_timer_service() const {
+TimerService& TelegramBot::Impl::get_timer_service() const {
     return *_timerService;
 }
+
+#pragma endregion // TgBot Implementation
+
 
 TimerReply::TimerReply(long handle)
     : _handle{ handle } {

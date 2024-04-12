@@ -95,10 +95,18 @@ template<> auto fetch_column(sqlite3_stmt* s, std::size_t index) -> std::string 
 }
 
 Database::Database()
-        : _engine{nullptr} {}
+    : _engine{nullptr} {}
 
 Database::~Database() {
     close();
+}
+
+int sqlite3_open(const std::filesystem::path& fs, sqlite3** db) {
+#if OS_WINDOWS
+    return ::sqlite3_open(fs.string().c_str(), db);
+#else
+    return ::sqlite3_open(fs.c_str(), db);
+#endif
 }
 
 void Database::open(std::string_view connectionString) {
@@ -106,17 +114,17 @@ void Database::open(std::string_view connectionString) {
         throw std::runtime_error("empty connection string");
     }
 
-    const auto fullPath = (util::get_executable_path() / connectionString.data());
+    const std::filesystem::path fullPath = (util::get_executable_path() / connectionString.data());
+
     if (!std::filesystem::exists(fullPath) || !std::filesystem::is_regular_file(fullPath)) {
-        throw std::runtime_error(fmt::format("Database file does not exist: {}", fullPath.c_str()));
+        throw std::runtime_error("");
     }
 
-    const auto ec = sqlite3_open(fullPath.c_str(), &_engine);
+    const auto ec = sqlite3_open(fullPath, &_engine);
     if (ec != SQLITE_OK) {
         close();
         throw Error(ec, _engine);
     }
-
 }
 
 void Database::close() {

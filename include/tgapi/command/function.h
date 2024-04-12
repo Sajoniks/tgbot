@@ -2,8 +2,10 @@
 
 #include <functional>
 #include <cstring>
+#include <string>
 #include <variant>
 #include <vector>
+#include <cctype>
 #include <type_traits>
 #include <stdexcept>
 #include <cassert>
